@@ -13,4 +13,3 @@ library(readr)
 ```{r, data}
 heart_failure <- read_csv("~/Desktop/Project/heart_failure.csv")
 ```
-
