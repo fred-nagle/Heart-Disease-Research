@@ -1,0 +1,259 @@
+---
+title: "Heart Disease Research Project"
+author: "Fred Nagle"
+date: "1/29/2022"
+output: pdf_document
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+library(readr)
+library(tidyverse)
+library(dplyr)
+library(caTools)
+library(ggplot2)
+library(modelr)
+library(caret)
+library(corrplot)
+library(glmnet)
+library(broom)
+library(InformationValue)
+library(ISLR)
+library(MASS)
+```
+
+```{r data, message=FALSE}
+heart_failure <- read_csv("~/Documents/MontClair/Project/heart_failure.csv")
+
+heart_failure <- rename(heart_failure, anemia = anaemia)
+
+# Convert columns from numeric to factor
+heart_failure_factor <- heart_failure
+
+Factors<-c("anemia", "diabetes", "high_blood_pressure", "sex", "smoking", "DEATH_EVENT")
+heart_failure_factor[Factors]<-lapply(heart_failure_factor[Factors],factor)
+
+head(heart_failure_factor)
+```
+
+# Descriptive Data Analysis
+## Full Sample
+```{r}
+# Summary
+summary(heart_failure_factor)
+
+# Plots (Death Event v Ejection Fraction)
+ggplot(heart_failure_factor, aes(DEATH_EVENT, ejection_fraction)) +
+  geom_boxplot(aes(fill = DEATH_EVENT)) +
+  scale_fill_manual(name="Death Event",labels=c("Survived Patients", "Dead Patients"), values=c("dodgerblue4", "firebrick4")) +
+  labs(title = "Death Event v. Ejection Fraction", x = "Death Event", y = "Ejection Fraction")
+
+# Plots (Death Event v age)
+ggplot(heart_failure_factor, aes(DEATH_EVENT, age)) +
+  geom_boxplot(aes(fill = DEATH_EVENT)) +
+  scale_fill_manual(name="Death Event",labels=c("Survived Patients", "Dead Patients"), values=c("dodgerblue4", "firebrick4")) +
+  labs(title = "Death Event v. Age", x = "Death Event", y = "Age")
+
+# Plots (Death Event v Serum Creatinine)
+ggplot(heart_failure_factor, aes(DEATH_EVENT, serum_creatinine)) +
+  geom_boxplot(aes(fill = DEATH_EVENT)) +
+  scale_fill_manual(name="Death Event",labels=c("Survived Patients", "Dead Patients"), values=c("dodgerblue4", "firebrick4")) +
+  labs(title = "Death Event v. Serum Creatinine", x = "Death Event", y = "Serum Creatinine (mg/gL)")
+
+# Plots (Death Event v Time)
+ggplot(heart_failure_factor, aes(DEATH_EVENT, time)) +
+  geom_boxplot(aes(fill = DEATH_EVENT)) +
+  scale_fill_manual(name="Death Event",labels=c("Survived Patients", "Dead Patients"), values=c("dodgerblue4", "firebrick4")) +
+  labs(title = "Death Event v. Time", x = "Death Event", y = "Time (Days)")
+
+```
+
+## Death Group
+```{r}
+# Filter dataset only deaths
+heart_failure_death <- filter(heart_failure_factor, DEATH_EVENT == 1)
+
+# Summary
+summary(heart_failure_death)
+```
+
+## Survival Group
+```{r}
+# Filter dataset only survival
+heart_failure_survival <- filter(heart_failure_factor, DEATH_EVENT == 0)
+
+# Summary
+summary(heart_failure_survival)
+```
+
+
+## Correlation plot
+```{r}
+correlations <- cor(heart_failure_factor[c(1,3,5,7,8,9,12)])
+corrplot(correlations, method="circle")
+```
+
+
+# Logistic Regression Analysis
+
+## Create Training Set & Test Set
+```{r}
+set.seed(123)
+training.samples <- heart_failure_factor$DEATH_EVENT %>% 
+  createDataPartition(p = 0.8, list = FALSE)
+train.data  <- heart_failure_factor[training.samples, ]
+test.data <- heart_failure_factor[-training.samples, ]
+```
+
+## Full Logistic Regression Analysis
+```{r}
+# Fit the model
+full.model <- glm(DEATH_EVENT ~., data = train.data, family = binomial)
+# Summarize the model
+summary(full.model)
+coef(full.model)
+car::vif(full.model)
+```
+
+#### Prediction accuracy of the full logistic regression model:
+```{r}
+# Make predictions
+probabilities <- full.model %>% predict(test.data, type = "response")
+predicted.classes <- ifelse(probabilities > 0.5, 1, 0)
+# Prediction accuracy
+observed.classes <- test.data$DEATH_EVENT
+mean(predicted.classes == observed.classes)
+```
+
+## Step Wise Logistic Regression
+```{r}
+step.model <- full.model %>% stepAIC(trace = FALSE)
+summary(step.model)
+coef(step.model)
+```
+
+### Compare the stepwise models
+
+#### Prediction accuracy of the stepwise logistic regression model:
+```{r}
+# Make predictions
+probabilities <- predict(step.model, test.data, type = "response")
+predicted.classes <- ifelse(probabilities > 0.5, 1, 0)
+# Prediction accuracy
+observed.classes <- test.data$DEATH_EVENT
+mean(predicted.classes == observed.classes)
+```
+
+## Lasso Regression
+### Create matrix of predictors
+```{r}
+# Dummy code categorical predictor variables
+x <- model.matrix(DEATH_EVENT~. , train.data)[,-1]
+# Convert the outcome (class) to a numerical variable
+y <- train.data$DEATH_EVENT
+```
+
+#### Lasso Model
+```{r}
+glmnet(x, y, family = "binomial", alpha = 1, lambda = NULL)
+```
+
+#### Compute Lasso Regression
+```{r}
+set.seed(123)
+cv.lasso <- cv.glmnet(x, y, alpha = 1, family = "binomial")
+plot(cv.lasso)
+```
+
+```{r}
+coef(cv.lasso, cv.lasso$lambda.min)
+coef(cv.lasso, cv.lasso$lambda.1se)
+```
+
+#### Prediction accuracy of Lasso Model lambda min
+```{r}
+# Final model with lambda.min
+lasso.model <- glmnet(x, y, alpha = 1, family = "binomial",
+                      lambda = cv.lasso$lambda.min)
+# Make prediction on test data
+x.test <- model.matrix(DEATH_EVENT ~., test.data)[,-1]
+probabilities <- lasso.model %>% predict(newx = x.test)
+predicted.classes <- ifelse(probabilities > 0.5, 1, 0)
+# Model accuracy
+observed.classes <- test.data$DEATH_EVENT
+mean(predicted.classes == observed.classes)
+```
+
+#### Prediction accuracy of Lasso Model lambda.1se
+```{r}
+# Final model with lambda.1se
+lasso.model <- glmnet(x, y, alpha = 1, family = "binomial",
+                      lambda = cv.lasso$lambda.1se)
+# Make prediction on test data
+x.test <- model.matrix(DEATH_EVENT ~., test.data)[,-1]
+probabilities <- lasso.model %>% predict(newx = x.test)
+predicted.classes <- ifelse(probabilities > 0.5, 1, 0)
+# Model accuracy rate
+observed.classes <- test.data$DEATH_EVENT
+mean(predicted.classes == observed.classes)
+```
+
+## New Model
+```{r}
+#fit multiple regression
+new_multireg <- glm(DEATH_EVENT~age+ejection_fraction+serum_creatinine+time, data = train.data, family = binomial)
+
+#get regression output
+summary(new_multireg)
+
+# Make predictions
+probabilities <- new_multireg %>% predict(test.data, type = "response")
+predicted.classes <- ifelse(probabilities > 0.5, 1, 0)
+# Prediction accuracy
+observed.classes <- test.data$DEATH_EVENT
+mean(predicted.classes == observed.classes)
+```
+
+
+## Compute Accuracy
+
+### Matrix
+```{r}
+#use model to predict probability of default
+predicted <- predict(new_multireg, test.data, type="response")
+
+#find optimal cutoff probability to use to maximize accuracy
+optimal <- optimalCutoff(test.data$DEATH_EVENT, predicted)[1]
+
+#create confusion matrix
+confusionMatrix(test.data$DEATH_EVENT, predicted)
+```
+
+### TP TN Rate
+```{r}
+#calculate sensitivity (TP Rate)
+sensitivity(test.data$DEATH_EVENT, predicted)
+
+#calculate specificity (TN Rate)
+specificity(test.data$DEATH_EVENT, predicted)
+
+#calculate total misclassification error rate
+misClassError(test.data$DEATH_EVENT, predicted, threshold=optimal)
+
+```
+
+### AUC
+```{r}
+#calculate probability of default for each individual in test dataset
+predicted <- predict(new_multireg, test.data, type="response")
+
+#calculate AUC
+library(pROC)
+auc(test.data$DEATH_EVENT, predicted)
+
+```
+
+
+
+
